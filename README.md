@@ -92,6 +92,10 @@ Parameters:
 
 Encode the BibTeX for LaTeX and save them as separate files in `self.bibtex_latex_folder`.
 
+### `Bib.compress_all_images(self)`
+
+Compress the images in the galleries.
+
 ### `Bib.generate_html_files(self)`
 
 Generate HTML galleries using the pictures in `self.html_folder`. Pictures are grouped by theme and titles link to the PDF files. Uses `BibCheckResultAll.csv` saved in `Bib.check(self)`.

@@ -1,17 +1,20 @@
 __author__ = "Yefan Zhi"
 
-import os
-import pandas as pd
-import pdf2bib
-import shutil
-import re
 import codecs
+import math
+import os
+import pathlib
+import re
+import shutil
+import time
+
 import bibtexparser
 import bibtexparser.middlewares as bm
-import pathlib
-from watchdog.observers import Observer
+import pandas as pd
+import pdf2bib
+from PIL import Image, ImageOps
 from watchdog.events import FileSystemEventHandler
-import time
+from watchdog.observers import Observer
 
 
 def analyse_short_code(string):
@@ -83,6 +86,43 @@ def latex_encode(bibtex_string):
     return bibtexparser.write_string(bib_database)
 
 
+def compress_and_replace(input_path, target_h=800, jpg_quality=30, delete_original=True, max_aspect_ratio=2,
+                         size_limit_in_KB=160):
+    if os.path.getsize(input_path) <= size_limit_in_KB * 1024:
+        return
+    input_path_pure, file_extension = os.path.splitext(input_path)
+    with Image.open(input_path) as img:
+        # already cool
+        if file_extension == ".jpg" and os.path.getsize(input_path) <= size_limit_in_KB * 1024 and img.size[0] / \
+                img.size[1] <= max_aspect_ratio:
+            # print("The following file is already cool: [{}]".format(input_path))
+            return
+        # check name clash
+        new_path = input_path_pure + ".jpg"
+        if new_path != input_path and os.path.isfile(new_path):
+            raise NameError("Target file name occupied by [{}]".format(new_path))
+        # aspect ratio restriction
+        if float(img.size[0]) / img.size[1] > max_aspect_ratio:
+            new_h = math.ceil(img.size[0] / max_aspect_ratio)
+            gap = math.ceil((new_h - img.size[1]) / 2)
+            img = ImageOps.expand(img, (0, gap, 0, gap), fill='white')
+        if img.size[1] >= target_h:
+            img = img.resize((min(int(target_h * img.size[0] / img.size[1]), target_h * max_aspect_ratio), target_h),
+                             Image.Resampling.LANCZOS)
+        if delete_original and new_path != input_path:
+            try:
+                os.remove(input_path)
+                print("+ Deleted original file at [{}]".format(input_path))
+            except:
+                print("! Unable to delete [{}]".format(input_path))
+
+            img.convert("RGB").save(input_path_pure + ".jpg", "JPEG", quality=jpg_quality)
+            print("+ Saved compressed file at [{}]".format(input_path_pure + ".jpg"))
+        else:
+            img.convert("RGB").save(input_path_pure + ".jpg", "JPEG", quality=jpg_quality)
+            print("+ Updated compressed file at [{}]".format(input_path_pure + ".jpg"))
+
+
 class Bib():
     def __init__(self, inspect_categories,
                  root_folder_path="",
@@ -110,7 +150,7 @@ class Bib():
         # pdf2bib.config.set('save_identifier_metadata', False)
         pdf2bib.config.set('verbose', False)
 
-    def check(self, update_bibtex=None, show_incomplete=True, check_books=False):
+    def check(self, update_bibtex=None, show_incomplete=False, check_books=False):
 
         def new_short_code(df, category, string):
             if debug_switch: print("short_code: ", string)
@@ -187,7 +227,6 @@ class Bib():
                     except:
                         raise NameError('Problem with bibtex [{}] in [{}]'.format(
                             entry[:30].replace("\n", " "), bibtex_file_path))
-
 
         print("+ Bib/PDF/Image imported into the DataFrame")
         print("+ Bibtex files updated in", self.bibtex_path)
@@ -307,6 +346,23 @@ class Bib():
         print("+ Bibtex (latex) files updated in", self.bibtex_latex_path)
         print()
 
+    def compress_all_images(self):
+        print("[COMPRESS ALL IMAGES]")
+        for category_file in os.listdir(self.bibtex_path):
+            bibtex_file_path = os.path.join(self.bibtex_path, category_file)
+            if os.path.isfile(bibtex_file_path):
+                category_name = category_file[:-4]
+        for category_name in self.inspect_categories:
+            category_path = os.path.join(self.pdf_path, category_name)
+            if os.path.isdir(category_path):
+                for file_name in os.listdir(category_path):
+                    file_path = os.path.join(category_path, file_name)
+                    _, file_extension = os.path.splitext(file_path)
+                    if file_extension in [".png", ".jpg", ".jpeg"]:
+                        # print(file_path)
+                        compress_and_replace(file_path)
+        print()
+
     def generate_html_files(self):
 
         def generate_html(df, category_name):
@@ -371,28 +427,30 @@ class Bib():
         
         .sidenav {
             height: 100%;
-            width: 330px;
+            width: 17vw;
             position: fixed;
+            line-height: 1.4em;
+            font-size: 1vw;
             z-index: 1;
             top: 0;
             left: 0;
             background-color: #d1d1d1;
             overflow-x: hidden;
+            overflow-y: internal;
+            padding: 1vw;
+            font-family: "Source Serif 4", serif;
         }
         
         .sidenav a {
-            font-family: "Source Serif 4", serif;
             text-decoration: none;
             display: block;
             color: black;
-            padding-left: 25px;
-            padding-right: 25px;
-            padding-bottom: -10px;
         }
                 
         .main {
-            margin-left: 345px; /* Same as the width of the sidenav */
+            margin-left: 20vw; /* Same as the width of the sidenav */
             overflow-x: hidden;
+            overflow-y: internal;
         }
     </style>
 </head>
@@ -427,13 +485,13 @@ class Bib():
                     # New Theme
                     theme_text = df.iloc[row_i, theme_i].replace("-", " ")
                     html_main += '<h1 id="{}">{}</h1>\n'.format(df.iloc[row_i, theme_i], theme_text)
-                    html_navbar_main += '<h3><a style="padding-left: 60px" href="#{}">{}</a></h3>\n'.format(
+                    html_navbar_main += '<a style="padding-left: 1vw" href="#{}">{}</a>\n'.format(
                         df.iloc[row_i, theme_i], theme_text)
                 boxstyle = "2" if isna.iloc[row_i, t_i] else ""
                 nobibtex = isna.iloc[row_i, t_i]
                 nofile = isna.iloc[row_i, file_i]
                 nopic = len(df.iloc[row_i, pictures_i]) <= 4
-                problem =  nobibtex or nofile or nopic
+                problem = nobibtex or nofile or nopic
                 boxstyle = "2" if problem else ""
                 probstring = '<span class="prob">PROB</span> ' if problem else ''
 
@@ -444,7 +502,8 @@ class Bib():
                     text = '{} {}'.format(index, df.iloc[row_i, title_i])
                     file = '{}/{}'.format(folder_path_absolute, df.iloc[row_i, file_i])
                     html_main += '<div class="title-box{}"><h4><a href = "{}">{}</a></h4></div>\n'.format(boxstyle,
-                        file, probstring + text)
+                                                                                                          file,
+                                                                                                          probstring + text)
 
                 # Display images
                 if nopic:
@@ -466,7 +525,7 @@ class Bib():
 
             html_navbar = ''
             for i, (category, link) in enumerate(self.html_file_path_dict.items()):
-                html_navbar += '<h2><a href="{}">{}</a></h2>\n'.format(link, category.replace("-", " "))
+                html_navbar += '<a href="{}">{}</a>\n'.format(link, category.replace("-", " "))
                 if category == category_name:
                     html_navbar += html_navbar_main
 
@@ -493,7 +552,8 @@ class Bib():
 
             def on_created(self, event):
                 if event.src_path.endswith("png") or event.src_path.endswith("jpg"):
-                    print(f'File {event.src_path} has been modified')
+                    print(f'File {event.src_path} has been created/modified')
+                    # compress_and_replace(os.path.join(self.bib.root_folder_path, event.src_path))
                     self.bib.check(show_incomplete=False)
                     self.bib.generate_html_files()
                     print()
@@ -566,10 +626,10 @@ class Bib():
                 if short_code in short_codes:
                     if enforce:
                         num = 2
-                        short_code_test = short_code + "-" +str(num)
+                        short_code_test = short_code + "-" + str(num)
                         while short_code_test in short_code:
                             num += 1
-                            short_code_test = short_code + "-" +str(num)
+                            short_code_test = short_code + "-" + str(num)
                         short_code = short_code_test
                     else:
                         raise NameError("Short code collision " + short_code)
