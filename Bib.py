@@ -45,9 +45,11 @@ def compress_string(string):
 
 
 def write_to_end_of_file(file_path, content):
-    with codecs.open(file_path, 'a', "utf8") as file:
-        file.write(content)
-
+    try:
+        with codecs.open(file_path, 'a', "utf8") as file:
+            file.write(content)
+    except:
+        raise NameError("Problem writing to end of file at [{}]".format(file_path))
 
 def find_substring_locations_regex(A, B):
     pattern = re.compile(f'(?=({re.escape(B)}))')
@@ -83,7 +85,8 @@ def analyze_bibtex_single_item(bibtex_string):
 def latex_encode(bibtex_string):
     bib_database = bibtexparser.parse_string(
         bibtex_string, append_middleware=[bm.LatexEncodingMiddleware()])
-    return bibtexparser.write_string(bib_database)
+
+    return bibtexparser.write_string(bib_database).replace(r"\&amp;", r"\&")
 
 
 def compress_and_replace(input_path, target_h=800, jpg_quality=30, delete_original=True, max_aspect_ratio=2,
@@ -121,6 +124,16 @@ def compress_and_replace(input_path, target_h=800, jpg_quality=30, delete_origin
         else:
             img.convert("RGB").save(input_path_pure + ".jpg", "JPEG", quality=jpg_quality)
             print("+ Updated compressed file at [{}]".format(input_path_pure + ".jpg"))
+
+
+def move_file(source_path, destination_path):
+    try:
+        shutil.move(source_path, destination_path)
+        print("+ Moved [{}] to [{}] ".format(source_path, destination_path))
+    except FileNotFoundError:
+        raise NameError(f"File '{source_path}' not found.")
+    except Exception as e:
+        raise NameError(f"Error: {str(e)}")
 
 
 class Bib():
@@ -588,14 +601,6 @@ class Bib():
                 short_codes_set.add(entries[i].split("{", 1)[1].split(",", 1)[0])
             return short_codes_set
 
-        def move_file(source_path, destination_path):
-            try:
-                shutil.move(source_path, destination_path)
-            except FileNotFoundError:
-                raise NameError(f"File '{source_path}' not found.")
-            except Exception as e:
-                raise NameError(f"Error: {str(e)}")
-
         def bib_single_new_short_code(bib, short_code):
             left = bib.split("{")[0]
             right = bib.split(",", 1)[1]
@@ -641,18 +646,17 @@ class Bib():
                 print("? Collect '" + os.path.join(category_folder_path, pdf_file) + "' as '" + new_file_name + "'")
                 decision = input("  and collect the above bibtex string ([y]/n)?")
                 if decision.strip() in ["", "y", "Y"]:
+                    print("+ Renamed '" + pdf_file + "' as '" + new_file_name + "'")
                     move_file(pdf_file_path,
                               os.path.join(os.path.join(self.pdf_path, category), new_file_name))
                     write_to_end_of_file(os.path.join(self.bibtex_path, category + ".bib"), "\n\n" + bib_string + "\n")
-                    print("+ Renamed '" + pdf_file + "' as '" + new_file_name + "'")
-                    print("+ Moved the PDF from '" + category_folder_path + "' to '" + \
-                          os.path.join(self.root_folder_path, category) + "'")
                     print("+ Added Bibtex to '" + os.path.join(self.bibtex_path, category + ".bib'"))
                     count_collected += 1
                 else:
                     print("  Nothing changed for this item.")
         if count_collected == 0:
-            print("+ Nothing collected")
+            # print("+ Nothing collected")
+            pass
         else:
             print("+ Collected", count_collected, "sources")
         print()
@@ -665,16 +669,19 @@ class Bib():
             file.write(bibtex_data)
 
     def theme_replace(self, old, new):
+        old = old.replace(" ", "-")
+        new = new.replace(" ", "-")
         print("[THEME REPLACE]")
         categories = self.inspect_categories
         # print("- Theme replacing  old:", old, " new:", new, " categories:", categories)
 
         # modify bibtex file
+        found = False
         for category in os.listdir(self.bibtex_path):
             bibtex_file_path = os.path.join(self.bibtex_path, category)
             if os.path.isfile(bibtex_file_path):
-                category = category[:-4]
-                if category not in categories: continue
+                category_name = category[:-4]
+                if category_name not in categories: continue
                 # print("- Updating bibtex of category: ", category_name)
                 with codecs.open(bibtex_file_path, 'r', "utf-8") as file:
                     bibtex_data = file.read()
@@ -687,20 +694,24 @@ class Bib():
 
                     author, year, theme, suffix = analyse_short_code(short_code)
                     if theme == old:
+                        found = True
                         short_code_new = author + "-" + year + "-" + new + suffix
                         print("+ Bibtex short code updated from", short_code, "to",
                               short_code_new)
                         entries[i] = left.lower() + "{" + short_code_new + "," + right
-                sorted_entries = sorted(entries, key=lambda x: x.split('{')[1].split(',')[0].strip())
-                new_bibtex = '\n\n\n'.join(sorted_entries)
-                with codecs.open(bibtex_file_path, 'w', "utf-8") as file:
-                    file.write(new_bibtex)
+                if found:
+                    new_bibtex = '\n\n\n'.join(entries)
+                    with codecs.open(bibtex_file_path, 'w', "utf-8") as file:
+                        file.write(new_bibtex)
+                    break
+
 
         # modify file
-        for category in os.listdir(self.pdf_path):
-            if category not in categories: continue
+        categories = [category_name] if found else self.inspect_categories
+        for category in categories:
             # print("- Updating files of category:", category_name)
             category_path = os.path.join(self.pdf_path, category)
+            if not os.path.exists(category_path): continue
             for file_name in os.listdir(category_path):
                 if os.path.isfile(os.path.join(category_path, file_name)):
                     short_code, title = file_name.split(" ", 1)
@@ -717,11 +728,14 @@ class Bib():
         print()
 
     def short_code_replace(self, old, new):
+        old = old.replace(" ", "-")
+        new = new.replace(" ", "-")
         categories = self.inspect_categories
         print("[SHORT CODE REPLACE]")
         # print("- Short code replacing  old:", old, " new:", new, " categories:", categories)
 
         # modify bibtex file
+        found = False
         for category in os.listdir(self.bibtex_path):
             bibtex_file_path = os.path.join(self.bibtex_path, category)
             if os.path.isfile(bibtex_file_path):
@@ -737,19 +751,22 @@ class Bib():
                     left, right = entries[i].split("{", 1)
                     short_code, right = right.split(",", 1)
                     if short_code == old:
+                        found = True
                         # print("- Modifying bibtex:", short_code)
                         print("+ Bibtex short code updated from", old, "to", new)
                         entries[i] = left.lower() + "{" + new + "," + right
-                sorted_entries = sorted(entries, key=lambda x: x.split('{')[1].split(',')[0].strip())
-                new_bibtex = '\n\n\n'.join(sorted_entries)
-                with codecs.open(bibtex_file_path, 'w', 'utf-8') as file:
-                    file.write(new_bibtex)
+                        new_bibtex = '\n\n\n'.join(entries)
+                        with codecs.open(bibtex_file_path, 'w', 'utf-8') as file:
+                            file.write(new_bibtex)
+                        break
+                if found: break
 
         # modify file
-        for category in os.listdir(self.pdf_path):
-            if category not in categories: continue
+        categories = [category_name] if found else self.inspect_categories
+        for category in categories:
             # print("- Updating files of category:", category_name)
             category_path = os.path.join(self.pdf_path, category)
+            if not os.path.exists(category_path): continue
             for file_name in os.listdir(category_path):
                 if os.path.isfile(os.path.join(category_path, file_name)):
                     short_code, title = file_name.split(" ", 1)
@@ -759,6 +776,55 @@ class Bib():
                         file_name_new = new + " " + title
                         os.rename(os.path.join(category_path, file_name),
                                   os.path.join(category_path, file_name_new))
+        print()
+
+    def category_change(self, target_short_code, new_category):
+        categories = self.inspect_categories
+        print("[CATEGORY CHANGE]")
+
+        # modify bibtex file
+        found = False
+        for category in os.listdir(self.bibtex_path):
+            bibtex_file_path = os.path.join(self.bibtex_path, category)
+            if os.path.isfile(bibtex_file_path):
+                category_name = category[:-4]
+                if category_name not in categories: continue
+                if category_name == new_category: continue
+                # print("- Updating bibtex of category: ", category_name)
+                with codecs.open(bibtex_file_path, 'r', 'utf-8') as file:
+                    bibtex_data = file.read()
+                bibtex_data = main_parser(bibtex_data)
+                # Split the BibTeX entries
+                entries = bibtex_data.split('\n\n\n')
+                for i in range(len(entries)):
+                    left, right = entries[i].split("{", 1)
+                    short_code, right = right.split(",", 1)
+                    if short_code == target_short_code:
+                        found = True
+                        # print("- Modifying bibtex:", short_code)
+                        write_to_end_of_file(os.path.join(self.bibtex_path, new_category + ".bib"), '\n\n\n' + entries[i])
+                        entries.pop(i)
+                        new_bibtex = '\n\n\n'.join(entries)
+                        with codecs.open(bibtex_file_path, 'w', 'utf-8') as file:
+                            file.write(new_bibtex)
+                        print("+ Bibtex moved from", category_name, "to", new_category)
+                        break
+                if found: break
+
+        # modify file
+        categories = [category_name] if found else self.inspect_categories
+        new_category_path = os.path.join(self.pdf_path, new_category)
+        for old_category in categories:
+            if old_category == new_category: continue
+            old_category_path = os.path.join(self.pdf_path, old_category)
+            if not os.path.exists(old_category_path): continue
+            for file_name in os.listdir(old_category_path):
+                old_file = os.path.join(old_category_path, file_name)
+                if os.path.isfile(old_file):
+                    short_code, _ = file_name.split(" ", 1)
+                    if short_code == target_short_code:
+                        move_file(old_file,
+                                  os.path.join(new_category_path, file_name))
         print()
 
     def select_from_typst(self, input="input.typ", output="selected.bib"):
